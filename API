@@ -18,22 +18,18 @@ import scala.language.implicitConversions
 import com.vrbo.vcea.AnalyticsTaskApp._
 import com.homeaway.analyticsengineering.encrypt.main.utilities.Utility
 
-
-
-
-
-
-//change naming 
 class telephonyagentstatusstats extends Utility {
 
   def run(): Unit = {
     val skipStaging = conf.getOrElse("skipStaging", "N")
-    //check skipStaging to determine if API should be called or if the table can be built without this step
+    
+    // skipStaging determines if API should be called
+    // skipStaging is utilized from command line
     if (skipStaging == "N") {
       try {
 
-
         log.warn("BEGIN stage_8x8_api Process")
+        
         //Setting Value/Variables for API Agent Status
         val sql = spark.sql _
         val s3Uri = "s3://"
