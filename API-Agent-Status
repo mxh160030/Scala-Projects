@@ -1,0 +1,196 @@
+/**
+*Created by Michael Hernandez
+*/
+
+import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.format.DateTimeFormat
+import java.util.TimeZone
+import scala.annotation.tailrec
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types.{StructType,ArrayType}
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.functions.col
+import org.json4s.JValue
+import scala.sys.process._
+import scala.xml.Elem
+import scala.collection.mutable.ListBuffer
+import scala.language.implicitConversions
+import com.vrbo.vcea.AnalyticsTaskApp._
+import com.homeaway.analyticsengineering.encrypt.main.utilities.Utility
+
+
+
+
+
+
+//change naming 
+class telephonyagentstatusstats extends Utility {
+
+  def run(): Unit = {
+    val skipStaging = conf.getOrElse("skipStaging", "N")
+    //check skipStaging to determine if API should be called or if the table can be built without this step
+    if (skipStaging == "N") {
+      try {
+
+
+        log.warn("BEGIN stage_8x8_api Process")
+        //Setting Value/Variables for API Agent Status
+        val sql = spark.sql _
+        val s3Uri = "s3://"
+        val stageTable = "apistatus"
+        val groupCall = "/stats/groups/"
+        val stageDb = "tier2_customerexperience_stage"
+        val token = "1d191d0d311c5d74840f3c6b133971e4"
+        val s3StageBucket = "ha-prod-ce-customerExperience-us-east-1"
+
+        //date and timestamp formats
+        val eventDateHourFormat = "YYYYMMddHH00"
+        val eventDateHourFormatter = DateTimeFormat.forPattern(eventDateHourFormat)
+        val dateFormat = "yyyyMMdd"
+        val dateFormatter = DateTimeFormat.forPattern(dateFormat)
+
+        // Start with default start anchor datetime to read the files.  The avro files are written out using CST dates.
+        val nowCST = DateTime.now(DateTimeZone.forTimeZone(TimeZone.getTimeZone("America/Chicago")))
+        val dwcreatedatetime = nowCST.toString("YYYYMMddHHmmss")
+
+        // Gather optional input datetime parameters.  If none then default to 2 hrs prior to current CST.
+        val startEventDateHour = conf.getOrElse("startEventDateHour", nowCST.minusHours(72).toString(eventDateHourFormat))
+        val endEventDateHour = conf.getOrElse("endEventDateHour", nowCST.plusHours(1).toString(eventDateHourFormat))
+
+        //      Etc/UTC
+        val startEventDateHourUTC = DateTime.parse(startEventDateHour, eventDateHourFormatter).plusHours(5) toString (eventDateHourFormat)
+        val endEventDateHourUTC = DateTime.parse(endEventDateHour, eventDateHourFormatter).plusHours(5).toString(eventDateHourFormat)
+
+        //now we'll make a list of each hour between our start and end, and stage each hour in parallel
+        var thisStartDateHourUTC = startEventDateHourUTC
+        var endDateHourUTC = DateTimeFormat.forPattern(eventDateHourFormat).parseDateTime(endEventDateHourUTC)
+        var startDateHourUTC = DateTimeFormat.forPattern(eventDateHourFormat).parseDateTime(startEventDateHourUTC)
+        var thisStartDateHour = startEventDateHour
+        var endDateHour = DateTimeFormat.forPattern(eventDateHourFormat).parseDateTime(endEventDateHour)
+        var startDateHour = DateTimeFormat.forPattern(eventDateHourFormat).parseDateTime(startEventDateHour)
+
+        var dates = new ListBuffer[(String, String, String, String)]()
+        var strNextDateHourUTC = ""
+        var strNextDateHour = ""
+
+
+      }
+      catch {
+        case e: Throwable =>
+          log.error(s"Something went WRONG during the run")
+          log.error(e.printStackTrace())
+          System.exit(1)
+      }
+      finally {
+
+      }
+
+      //Below is to pull from the agent list that is updated daily. This ensures we have the most accurate and up to date agents to pull.
+      // The agent pull has been put into an auto-refresh to ensure efficiency with this job.
+      val apiDF2 = spark.sql("""select agentid FROM tier2_customerexperience_stage.agentlist """)
+      var agentArray = apiDF2.select("agentid").rdd.map(r => r(0)).collect()
+
+      //Initiate Agent Status API Call to call upon
+      // INITIATE API CALL
+      def getStatsAPIResponse(xmlIn: String, recordNum: Int, token: String, urlToCall: String): String = {
+      @tailrec
+      def getStatsAPIResponsesIter(xmlIn: String, recordNum: Int): String = {
+      val command = Seq("curl", "-u", s"homeawayglobal:$token", s"https://vcc-na19.8x8.com/api/stats/agents/$urlToCall&n=$recordNum")
+      println(command.toString())
+
+      val apiResp = command.!!.toString
+
+      val pattern = "<status>".r
+      val isEmpty = pattern.findFirstIn(apiResp).getOrElse("no match")
+
+        if(isEmpty == "no match") {
+        val prefix = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><statuses>"""
+        val suffix = "</statuses>"
+        val xmlOut = prefix.concat(xmlIn).concat(suffix)
+        return xmlOut
+      }
+
+      else {
+        val apiResp2 = apiResp.replace("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><statuses>""","")
+        val apiResp3 = apiResp2.replace("</statuses>","")
+            }
+      }
+  getStatsAPIResponsesIter(xmlIn, recordNum)
+}  // End of initiating API call
+      // 20190101T0000Z,20190103T0000Z"
+
+      //iteration to get all statuses
+      for(i <- 0 until agentArray.length) {
+        var numArray = agentArray(i)
+        println(numArray)
+
+        val allAgentStatuses = s"$numArray/statuses?d=20190101T0000Z,20190103T0000Z"
+        val startString = ""
+        val output = getStatsAPIResponse(startString, 1, token, allAgentStatuses)
+
+        if (output !="""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><statuses></statuses>""")
+        {
+          val xmlstr: Elem = scala.xml.XML.loadString(output)
+          val jsonstr: JValue = org.json4s.Xml.toJson(xmlstr)
+          val jsonString = org.json4s.jackson.JsonMethods.pretty(jsonstr)
+
+          val rdd = spark.sparkContext.parallelize(Seq(jsonString)) //Changed from List to Seq
+          val df = spark.read.json(rdd)
+          df.createOrReplaceTempView("df")
+          def flattenDataFrame(df:DataFrame): DataFrame = {
+            val fields = df.schema.fields
+            val fieldNames = fields.map(x=>x.name)
+            val length = fields.length
+            for (i<-0 to fields.length-1) {
+              val field = fields(i)
+              val fieldtype = field.dataType
+              val fieldName = field.name
+              fieldtype match {
+                case arrayType: ArrayType =>
+                  val fieldNamesExcludingArray = fieldNames.filter(_!=fieldName)
+                  val fieldNamesAndExplode = fieldNamesExcludingArray ++ Array(s"explode_outer($fieldName) as $fieldName")
+                  val explodedDF = df.selectExpr(fieldNamesAndExplode:_*)
+                  return flattenDataFrame(explodedDF)
+                case structType: StructType =>
+                  val childFieldNames = structType.fieldNames.map(childname => fieldName +"."+childname)
+                  val newFieldNames = fieldNames.filter(_!= fieldName) ++ childFieldNames
+                  val renamedcols = newFieldNames.map(x=> (col(x.toString()).as(x.toString().replace(".","_"))))
+                  val explodedf = df.select(renamedcols:_*)
+                  return flattenDataFrame(explodedf)
+                case _=>
+              }
+            }
+            df
+          }
+          val flattendedJSON = flattenDataFrame(df)
+          flattendedJSON.schema
+          flattendedJSON.show(false)
+
+          val finalDF = flattendedJSON.select($"statuses_status_agent-id".as("agentid"),$"statuses_status_agent-name".as("agentname"),$"statuses_status_event-time".as("eventtime"),$"statuses_status_group-id".as("groupid"),$"statuses_status_group-name".as("groupname"),$"statuses_status_scl-item-id".as("itemid"),$"statuses_status_scl-item-report-text".as("itemreport"),$"statuses_status_scl-item-shortcode-text".as("itemshortcode"),$"statuses_status_scl-list-id".as("listid"),$"statuses_status_status".as("status"),$"statuses_status_transaction-id".as("transactionid")).withColumn("eventdatetimeutc", from_unixtime(unix_timestamp(col("eventtime").cast("timestamp"))).cast("timestamp")).withColumn("groupid", col("groupid").cast("int")).withColumn("listid",col("listid").cast("int"))
+          finalDF.createOrReplaceTempView("final")
+          finalDF.show()
+          finalDF.printSchema()
+          //finalDF.repartition(1).write.mode(SaveMode.Append).parquet(s"$s3Uri$s3StageBucket/stage/agentstatus/targetdf/data/eventdatehour=$startEventDateHour")
+        }
+
+
+
+      } //End of iteration to get all agent statuses
+
+
+        /*
+    what i want to do here is
+    1. call the API for the given dates
+    2. capture the output returned
+    3. put the output returned in a dataframe
+    4. insert from the dataframe to the stage table
+    NOTE: the first pass at this may be less than elegant, may hard-code some things just to get the ball rolling.
+    Going to focus on just getting something *working*, then polish later.
+    */
+
+
+        // need to pass in startDateHour in the format of yyyy-MM-dd%20HH:00
+        // add&tz=America/Chicago
+
+
+  }}}
