@@ -39,9 +39,9 @@ class telephonyagentstatusstats extends Utility {
         val s3Uri = "s3://"
         val stageTable = "apistatus"
         val groupCall = "/stats/groups/"
-        val stageDb = "tier2_customerexperience_stage"
-        val token = "1d191d0d311c5d74840f3c6b133971e4"
-        val s3StageBucket = "ha-prod-ce-customerExperience-us-east-1"
+        val stageDb = "database_environment"
+        val token = "xxxx-xxx-xxx"
+        val s3StageBucket = "stage_location"
 
         //date and timestamp formats
         val eventDateHourFormat = "YYYYMMddHH00"
@@ -87,7 +87,8 @@ class telephonyagentstatusstats extends Utility {
 
       //Below is to pull from the agent list that is updated daily. This ensures we have the most accurate and up to date agents to pull.
       // The agent pull has been put into an auto-refresh to ensure efficiency with this job.
-      val apiDF2 = spark.sql("""select agentid FROM tier2_customerexperience_stage.agentlist """)
+      
+      val apiDF2 = spark.sql("""select agentid FROM database_environment.agentlist """)
       var agentArray = apiDF2.select("agentid").rdd.map(r => r(0)).collect()
 
       //Initiate Agent Status API Call to call upon
@@ -95,7 +96,7 @@ class telephonyagentstatusstats extends Utility {
       def getStatsAPIResponse(xmlIn: String, recordNum: Int, token: String, urlToCall: String): String = {
       @tailrec
       def getStatsAPIResponsesIter(xmlIn: String, recordNum: Int): String = {
-      val command = Seq("curl", "-u", s"homeawayglobal:$token", s"https://vcc-na19.8x8.com/api/stats/agents/$urlToCall&n=$recordNum")
+      val command = Seq("curl", "-u", s"login_info:$token", s"https://telephonyprovider.com/api/stats/agents/$urlToCall&n=$recordNum")
       println(command.toString())
 
       val apiResp = command.!!.toString
@@ -117,7 +118,6 @@ class telephonyagentstatusstats extends Utility {
       }
   getStatsAPIResponsesIter(xmlIn, recordNum)
 }  // End of initiating API call
-      // 20190101T0000Z,20190103T0000Z"
 
       //iteration to get all statuses
       for(i <- 0 until agentArray.length) {
